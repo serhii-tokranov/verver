@@ -1,0 +1,52 @@
+# Build output
+/bin/
+/build/
+/dist/
+/coverage/
+/coverage.out
+/coverage.html
+/go.work
+/go.work.sum
+/.cache/
+/.gocache/
+*.test
+*.prof
+*.pprof
+
+# Temporary files
+/tmp/
+/temp/
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+/.secrets/
+/secrets/
+/.credentials/
+.netrc
+.npmrc
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+/docs/
+
+# Editor and operating-system files
+/.idea/
+/.vscode/
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
