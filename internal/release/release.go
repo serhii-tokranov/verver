@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"verver/internal/repository"
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 const annotationPrefix = "verver/v1\n"

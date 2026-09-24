@@ -17,7 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 
-	"verver/internal/release"
+	"github.com/serhii-tokranov/verver/internal/release"
 )
 
 func cliRepo(t *testing.T) (string, *git.Repository, plumbing.Hash) {

@@ -10,7 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 func TestRemoteLifecycle(t *testing.T) {

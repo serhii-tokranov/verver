@@ -1,4 +1,4 @@
-module verver
+module github.com/serhii-tokranov/verver
 
 go 1.26.0
 

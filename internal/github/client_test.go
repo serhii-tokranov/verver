@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/repository"
 )
 
 func TestSources(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"verver/internal/release"
-	"verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/release"
+	"github.com/serhii-tokranov/verver/internal/repository"
 )
 
 type Client struct {

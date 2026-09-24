@@ -15,7 +15,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 // Fixtures use real on-disk Git objects, without subprocesses or network access.

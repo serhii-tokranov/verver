@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"verver/internal/repository"
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 type graph map[plumbing.Hash]repository.Commit

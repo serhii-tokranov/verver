@@ -18,7 +18,7 @@ Patch is the default—even for `feat:` commits. Include `[version:minor]` or `[
 
 Run Verver in a **final job that depends on every required check**. That job needs a full checkout, permission to create tags, and a shared concurrency group across all branches and workflows using Verver.
 
-Add this job to an existing workflow triggered by branch pushes. Replace `checks` with your required job IDs, and replace `OWNER/verver@FULL_COMMIT_SHA` with a trusted, immutable revision of this repository.
+Add this job to an existing workflow triggered by branch pushes. Replace `checks` with your required job IDs. The example pins Verver to an immutable commit; update that pin deliberately when upgrading.
 
 ```yaml
 version:
@@ -38,7 +38,7 @@ version:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: OWNER/verver@FULL_COMMIT_SHA
+    - uses: serhii-tokranov/verver@fe09cade2d2d06610e0708650f0903b463b19ef8
       id: version
 ```
 
@@ -62,7 +62,7 @@ All inputs are optional:
 For example:
 
 ```yaml
-- uses: OWNER/verver@FULL_COMMIT_SHA
+- uses: serhii-tokranov/verver@fe09cade2d2d06610e0708650f0903b463b19ef8
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
@@ -144,3 +144,7 @@ go build ./...
 ```
 
 Tests include release scenarios, real repository fixtures, in-process Git pack transfer and tag creation, GitHub API fixtures, and CLI release/rerun behavior. They do not need credentials or a running Git server. Hosted workflow permissions and merge behavior still need verification in the destination GitHub repository.
+
+## License
+
+[MIT](LICENSE) © 2026 Serhii Tokranov.

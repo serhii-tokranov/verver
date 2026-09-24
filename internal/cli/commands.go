@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 
-	gh "verver/internal/github"
-	"verver/internal/release"
-	"verver/internal/repository"
-	"verver/internal/version"
+	gh "github.com/serhii-tokranov/verver/internal/github"
+	"github.com/serhii-tokranov/verver/internal/release"
+	"github.com/serhii-tokranov/verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 type options struct {

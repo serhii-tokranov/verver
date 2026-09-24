@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"verver/internal/repository"
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/repository"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 // Backend must operate on the same repository as History. Callers serialize

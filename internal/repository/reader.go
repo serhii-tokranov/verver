@@ -13,7 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"verver/internal/version"
+	"github.com/serhii-tokranov/verver/internal/version"
 )
 
 // Reader requires a full, ordinary SHA-1 repository or a bare repository.

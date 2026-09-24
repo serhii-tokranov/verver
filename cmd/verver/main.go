@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"verver/internal/cli"
+	"github.com/serhii-tokranov/verver/internal/cli"
 )
 
 // Set by release builds with -ldflags "-X main.version=...".
