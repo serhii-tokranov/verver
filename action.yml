@@ -1,0 +1,76 @@
+name: Verver
+description: Assign stable and release candidate tags after successful checks.
+branding:
+  icon: tag
+  color: blue
+inputs:
+  main-branch:
+    description: Branch receiving stable releases.
+    default: main
+  main-pattern:
+    description: Optional literal prefix followed by MAJOR.MINOR.PATCH.
+    default: vMAJOR.MINOR.PATCH
+  feature-pattern:
+    description: Candidate suffix, -<label>.RC.
+    default: -rc.RC
+  path:
+    description: Path to a complete checkout of the tested repository.
+    default: .
+  token:
+    description: Repository token with contents write and pull requests read permissions.
+    default: ${{ github.token }}
+  adopt-existing:
+    description: Explicitly accept existing matching tags not created by Verver.
+    default: 'false'
+outputs:
+  tag:
+    description: Confirmed version tag.
+    value: ${{ steps.version.outputs.tag }}
+  sha:
+    description: Tested commit receiving the tag.
+    value: ${{ steps.version.outputs.sha }}
+  kind:
+    description: stable or rc.
+    value: ${{ steps.version.outputs.kind }}
+  status:
+    description: created or reused.
+    value: ${{ steps.version.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: '1.26.x'
+        cache: false
+    - name: Build Verver
+      shell: bash
+      env:
+        TOOL_SOURCE: ${{ github.action_path }}
+        GOWORK: 'off'
+      run: |
+        tool_dir="$(mktemp -d "$RUNNER_TEMP/verver.XXXXXX")"
+        go -C "$TOOL_SOURCE" build -trimpath -o "$tool_dir/verver" ./cmd/verver
+        echo "VERVER_BINARY=$tool_dir/verver" >> "$GITHUB_ENV"
+    - name: Assign version
+      id: version
+      shell: bash
+      env:
+        VERVER_TOKEN: ${{ inputs.token }}
+        REPO_PATH: ${{ inputs.path }}
+        MAIN_BRANCH: ${{ inputs.main-branch }}
+        MAIN_PATTERN: ${{ inputs.main-pattern }}
+        FEATURE_PATTERN: ${{ inputs.feature-pattern }}
+        ADOPT_EXISTING: ${{ inputs.adopt-existing }}
+      run: |
+        case "$ADOPT_EXISTING" in
+          true) adoption=(--adopt-existing) ;;
+          false) adoption=() ;;
+          *) echo 'adopt-existing must be true or false' >&2; exit 2 ;;
+        esac
+        "$VERVER_BINARY" release --path "$REPO_PATH" \
+          --ref "$GITHUB_REF" --sha "$GITHUB_SHA" --serialized \
+          --main-branch "$MAIN_BRANCH" --main-pattern "$MAIN_PATTERN" \
+          --feature-pattern "$FEATURE_PATTERN" \
+          --github "$GITHUB_REPOSITORY" \
+          --remote-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
+          --github-output "$GITHUB_OUTPUT" --format json "${adoption[@]}"
