@@ -214,17 +214,99 @@ func Inspect(tags []repository.Tag, c Config, adopt bool) (*repository.Tag, []pl
 	return stable, consumed, nil
 }
 
-func Intent(commits []repository.Commit) version.Bump {
-	bump := version.Patch
-	for _, c := range commits {
-		if strings.Contains(c.Message, "[version:major]") {
-			return version.Major
+const exactMarkerPrefix = "[version:set="
+
+// VersionIntent is the strongest version request in a pending commit range.
+// Exact targets are deliberately separate from relative major/minor bumps.
+type VersionIntent struct {
+	Bump  version.Bump
+	Exact *version.Core
+}
+
+// ResolveIntent validates version markers and returns one unambiguous request.
+func ResolveIntent(commits []repository.Commit) (VersionIntent, error) {
+	intent := VersionIntent{Bump: version.Patch}
+	relative := false
+	for _, commit := range commits {
+		if strings.Contains(commit.Message, "[version:major]") {
+			intent.Bump = version.Major
+			relative = true
+		} else if strings.Contains(commit.Message, "[version:minor]") {
+			if intent.Bump < version.Minor {
+				intent.Bump = version.Minor
+			}
+			relative = true
 		}
-		if strings.Contains(c.Message, "[version:minor]") {
-			bump = version.Minor
+		message := commit.Message
+		for {
+			start := strings.Index(message, exactMarkerPrefix)
+			if start < 0 {
+				break
+			}
+			value := message[start+len(exactMarkerPrefix):]
+			end := strings.IndexByte(value, ']')
+			if end < 0 {
+				return VersionIntent{}, fmt.Errorf("malformed exact version marker in %s", intentLocation(commit))
+			}
+			core, err := version.ParseCore(value[:end])
+			if err != nil {
+				return VersionIntent{}, fmt.Errorf("invalid exact version marker in %s: %w", intentLocation(commit), err)
+			}
+			if intent.Exact != nil && *intent.Exact != core {
+				return VersionIntent{}, fmt.Errorf("conflicting exact version markers %s and %s", intent.Exact, core.String())
+			}
+			copy := core
+			intent.Exact = &copy
+			message = value[end+1:]
 		}
 	}
-	return bump
+	if intent.Exact != nil && relative {
+		return VersionIntent{}, fmt.Errorf("exact version marker %s cannot be combined with minor or major markers", intent.Marker())
+	}
+	return intent, nil
+}
+
+func intentLocation(commit repository.Commit) string {
+	if commit.Hash.IsZero() {
+		return "message"
+	}
+	return "commit " + commit.Hash.String()
+}
+
+// Target applies this intent to the latest stable core.
+func (i VersionIntent) Target(base version.Core) (version.Core, error) {
+	if i.Exact == nil {
+		return base.Next(i.Bump)
+	}
+	if i.Exact.Compare(base) <= 0 {
+		return version.Core{}, fmt.Errorf("exact version %s must be greater than latest stable version %s", i.Exact, base.String())
+	}
+	return *i.Exact, nil
+}
+
+// Preserves reports whether landed history retains a source history's intent.
+func (i VersionIntent) Preserves(required VersionIntent) bool {
+	if required.Exact != nil {
+		return i.Exact != nil && *i.Exact == *required.Exact
+	}
+	if required.Bump == version.Patch {
+		return true
+	}
+	return i.Exact == nil && i.Bump >= required.Bump
+}
+
+// Marker returns the marker a rewritten merge must preserve.
+func (i VersionIntent) Marker() string {
+	if i.Exact != nil {
+		return exactMarkerPrefix + i.Exact.String() + "]"
+	}
+	if i.Bump == version.Major {
+		return "[version:major]"
+	}
+	if i.Bump == version.Minor {
+		return "[version:minor]"
+	}
+	return ""
 }
 
 // Ancestor includes equality. Missing history is an error, never a false result.
@@ -314,7 +396,10 @@ func Calculate(ctx context.Context, h History, state State, req Request) (Result
 	if err != nil {
 		return Result{}, err
 	}
-	bump := Intent(commits)
+	intent, err := ResolveIntent(commits)
+	if err != nil {
+		return Result{}, err
+	}
 	consumedIDs := map[string]bool{}
 	if main {
 		for _, source := range req.Sources {
@@ -333,14 +418,18 @@ func Calculate(ctx context.Context, h History, state State, req Request) (Result
 			for _, commit := range sourceRange {
 				consumedIDs[commit.Hash.String()] = true
 			}
-			if Intent(sourceRange) > bump {
+			sourceIntent, err := ResolveIntent(sourceRange)
+			if err != nil {
+				return Result{}, err
+			}
+			if !intent.Preserves(sourceIntent) {
 				return Result{}, fmt.Errorf("merged source %s lost its version marker; preserve the marker in landed history before releasing", source.Head)
 			}
 		}
 	} else if len(req.Sources) != 0 {
 		return Result{}, fmt.Errorf("merged-source provenance is only valid for main releases")
 	}
-	core, err := base.Next(bump)
+	core, err := intent.Target(base)
 	if err != nil {
 		return Result{}, err
 	}

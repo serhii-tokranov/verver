@@ -21,6 +21,10 @@ import (
 )
 
 func cliRepo(t *testing.T) (string, *git.Repository, plumbing.Hash) {
+	return cliRepoMessage(t, "first [version:minor]")
+}
+
+func cliRepoMessage(t *testing.T, message string) (string, *git.Repository, plumbing.Hash) {
 	t.Helper()
 	path := t.TempDir()
 	repo, err := git.PlainInit(path, true)
@@ -37,7 +41,7 @@ func cliRepo(t *testing.T) (string, *git.Repository, plumbing.Hash) {
 	}
 	sig := object.Signature{Name: "Test", Email: "test@example.com", When: time.Unix(1, 0)}
 	obj := repo.Storer.NewEncodedObject()
-	if err := (&object.Commit{Author: sig, Committer: sig, Message: "first [version:minor]", TreeHash: treeHash}).Encode(obj); err != nil {
+	if err := (&object.Commit{Author: sig, Committer: sig, Message: message, TreeHash: treeHash}).Encode(obj); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := repo.Storer.SetEncodedObject(obj)
@@ -50,6 +54,15 @@ func cliRepo(t *testing.T) (string, *git.Repository, plumbing.Hash) {
 		}
 	}
 	return path, repo, hash
+}
+
+func TestCLIExactVersionPreview(t *testing.T) {
+	path, _, _ := cliRepoMessage(t, "chore: [version:set=2.5.0] align release")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"next", "--path", path, "--ref", "refs/heads/main"}, &stdout, &stderr, "test")
+	if code != 0 || stdout.String() != "v2.5.0\n" {
+		t.Fatal(code, stdout.String(), stderr.String())
+	}
 }
 
 func TestCLIReleaseAndRetry(t *testing.T) {
