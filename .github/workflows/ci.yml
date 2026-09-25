@@ -101,4 +101,4 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: serhii-tokranov/verver@v0.0.1
+      - uses: serhii-tokranov/verver@v0.0.3

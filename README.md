@@ -36,7 +36,7 @@ version:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: serhii-tokranov/verver@v0.0.1
+    - uses: serhii-tokranov/verver@v0.0.3
 ```
 
 The Action builds its pinned source with Go; no Docker image or separate binary installation is needed. It uses `github.token` by default. Repository or organization tag rules must allow that token to create the selected tags. PR and merge-queue events never assign versions, and branch-push triggers avoid tag-triggered loops.
@@ -60,7 +60,7 @@ For example:
 
 ```yaml
 
-- uses: serhii-tokranov/verver@v0.0.1
+- uses: serhii-tokranov/verver@v0.0.3
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
