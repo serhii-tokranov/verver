@@ -61,12 +61,12 @@ version:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: serhii-tokranov/verver@v0.0.3
+    - uses: serhii-tokranov/verver@v0.1.0
 ```
 
 The Action builds its pinned source with Go; no Docker image or separate binary installation is needed. It uses `github.token` by default. Repository or organization tag rules must allow that token to create the selected tags. PR and merge-queue events never assign versions, and branch-push triggers avoid tag-triggered loops.
 
-This repository uses the same pinned Action in its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. Pull-request intent validation separately builds its checker from trusted main code.
+This repository bootstraps each release with the previous stable Action in its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. Pull-request intent validation separately builds its checker from trusted main code.
 
 ### Configuration
 
@@ -85,7 +85,7 @@ For example:
 
 ```yaml
 
-- uses: serhii-tokranov/verver@v0.0.3
+- uses: serhii-tokranov/verver@v0.1.0
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
