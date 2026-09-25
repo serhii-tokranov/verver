@@ -59,6 +59,7 @@ All inputs are optional:
 For example:
 
 ```yaml
+
 - uses: serhii-tokranov/verver@v0.0.1
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
