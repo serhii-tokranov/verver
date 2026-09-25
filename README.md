@@ -38,7 +38,7 @@ version:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: serhii-tokranov/verver@fe09cade2d2d06610e0708650f0903b463b19ef8
+    - uses: serhii-tokranov/verver@5643890c09a30720bf44973b81961c070e2c5bc0
       id: version
 ```
 
@@ -62,7 +62,7 @@ All inputs are optional:
 For example:
 
 ```yaml
-- uses: serhii-tokranov/verver@fe09cade2d2d06610e0708650f0903b463b19ef8
+- uses: serhii-tokranov/verver@5643890c09a30720bf44973b81961c070e2c5bc0
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
