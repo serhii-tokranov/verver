@@ -18,7 +18,7 @@ Patch is the default—even for `feat:` commits. Include `[version:minor]` or `[
 
 Run Verver in a **final job that depends on every required check**. That job needs a full checkout, permission to create tags, and a shared concurrency group across all branches and workflows using Verver.
 
-Add this job to an existing workflow triggered by branch pushes. Replace `checks` with your required job IDs. The example pins Verver to an immutable commit; update that pin deliberately when upgrading.
+Add this job to an existing workflow triggered by branch pushes. Replace `checks` with your required job IDs. The example uses an exact release tag; update it deliberately when upgrading. Pin the corresponding full commit SHA instead when your supply-chain policy requires it.
 
 ```yaml
 version:
@@ -31,20 +31,17 @@ version:
   concurrency:
     group: verver-release
     queue: max
-    cancel-in-progress: false
   steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: serhii-tokranov/verver@5643890c09a30720bf44973b81961c070e2c5bc0
-      id: version
+    - uses: serhii-tokranov/verver@v0.0.1
 ```
 
 The Action builds its pinned source with Go; no Docker image or separate binary installation is needed. It uses `github.token` by default. Repository or organization tag rules must allow that token to create the selected tags. PR and merge-queue events never assign versions, and branch-push triggers avoid tag-triggered loops.
 
-This repository includes its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. The finalizer is built from trusted main code in a read-only job, then passed to the write job. The first push containing the complete implementation on `main` bootstraps self-versioning.
+This repository uses the same pinned Action in its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. Pull-request intent validation separately builds its checker from trusted main code.
 
 ### Configuration
 
@@ -62,13 +59,14 @@ All inputs are optional:
 For example:
 
 ```yaml
-- uses: serhii-tokranov/verver@5643890c09a30720bf44973b81961c070e2c5bc0
+
+- uses: serhii-tokranov/verver@v0.0.1
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
 ```
 
-Outputs are `tag`, `sha`, `kind` (`stable` or `rc`), and `status` (`created` or `reused`). Read them through `steps.version.outputs.tag`, for example. The final tag is assigned after checks, so it is unavailable to earlier build steps.
+Outputs are `tag`, `sha`, `kind` (`stable` or `rc`), and `status` (`created` or `reused`). Add `id: version` to the Action step to read `steps.version.outputs.tag`, for example. The final tag is assigned after checks, so it is unavailable to earlier build steps.
 
 ## Release behavior
 
