@@ -126,6 +126,95 @@ func TestReleaseSequence(t *testing.T) {
 	assign(t, g, &s, "a", major, "v1.0.0-rc.1")
 }
 
+func TestExactVersionSequence(t *testing.T) {
+	g := graph{}
+	root := g.add("initial")
+	state := State{Main: root}
+	assign(t, g, &state, "main", root, "v0.0.1")
+
+	exact := g.add("chore: [version:set=2.5.0] align release", root)
+	assign(t, g, &state, "a", exact, "v2.5.0-rc.1")
+	continued := g.add("more work", exact)
+	assign(t, g, &state, "a", continued, "v2.5.0-rc.2")
+	other := g.add("chore: [version:set=2.5.0] same target", root)
+	assign(t, g, &state, "b", other, "v2.5.0-rc.3")
+
+	state.Main = g.add("squash: [version:set=2.5.0] align release", root)
+	result := assign(t, g, &state, "main", state.Main, "v2.5.0", Source{Head: continued.String(), Pull: 9})
+	if len(result.Assignment.Consumed) != 2 {
+		t.Fatal(result.Assignment)
+	}
+	after := g.add("work after exact release", continued)
+	assign(t, g, &state, "a", after, "v2.5.1-rc.1")
+}
+
+func TestExactVersionPolicies(t *testing.T) {
+	commit := func(message string) []repository.Commit {
+		return []repository.Commit{{Hash: plumbing.NewHash(strings.Repeat("a", 40)), Message: message}}
+	}
+	for _, tt := range []struct {
+		message string
+		want    string
+	}{
+		{"[version:set=1.2.3]", "1.2.3"},
+		{"[version:set=1.2.3] and again [version:set=1.2.3]", "1.2.3"},
+	} {
+		intent, err := ResolveIntent(commit(tt.message))
+		if err != nil || intent.Exact == nil || intent.Exact.String() != tt.want {
+			t.Fatalf("%q: %+v, %v", tt.message, intent, err)
+		}
+	}
+	for _, message := range []string{
+		"[version:set=1.2.3",
+		"[version:set=1.2]",
+		"[version:set=01.2.3]",
+		"[version:set=1.2.3] [version:set=1.2.4]",
+		"[version:set=1.2.3] [version:minor]",
+		"[version:set=1.2.3] [version:major]",
+	} {
+		if _, err := ResolveIntent(commit(message)); err == nil {
+			t.Errorf("accepted %q", message)
+		}
+	}
+
+	intent, err := ResolveIntent(commit("[version:set=1.2.3]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []version.Core{{Major: 1, Minor: 2, Patch: 3}, {Major: 2}} {
+		if _, err := intent.Target(base); err == nil || !strings.Contains(err.Error(), "greater") {
+			t.Errorf("accepted exact target %s after %s: %v", intent.Exact, base, err)
+		}
+	}
+	if got, err := intent.Target(version.Core{Major: 1, Minor: 2, Patch: 2}); err != nil || got != (version.Core{Major: 1, Minor: 2, Patch: 3}) {
+		t.Fatal(got, err)
+	}
+
+	minor, _ := ResolveIntent(commit("[version:minor]"))
+	major, _ := ResolveIntent(commit("[version:major]"))
+	patch, _ := ResolveIntent(commit("normal"))
+	if !major.Preserves(minor) || !intent.Preserves(patch) || minor.Preserves(intent) || patch.Preserves(minor) {
+		t.Fatal("intent preservation rules are inconsistent")
+	}
+}
+
+func TestExactVersionMarkerMustSurviveRewrite(t *testing.T) {
+	g := graph{}
+	root := g.add("root")
+	state := State{Main: root}
+	assign(t, g, &state, "main", root, "v0.0.1")
+	source := g.add("[version:set=2.0.0]", root)
+	state.Main = g.add("squash without marker", root)
+	state.Branch = state.Main
+	_, err := Calculate(context.Background(), g, state, Request{
+		Config: testConfig(), Ref: "refs/heads/main", Commit: state.Main,
+		Sources: []Source{{Head: source.String(), Pull: 10}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lost") {
+		t.Fatal(err)
+	}
+}
+
 func TestPolicies(t *testing.T) {
 	g := graph{}
 	root := g.add("root")

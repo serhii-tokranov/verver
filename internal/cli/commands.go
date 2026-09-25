@@ -339,13 +339,18 @@ func checkPR(ctx context.Context, reader *repository.Reader, o options, p versio
 	if err != nil {
 		return err
 	}
-	pending := release.Intent(commits)
-	if o.mergeMethod == "squash" && release.Intent([]repository.Commit{{Message: pull.Title + "\n" + pull.Body}}) < pending {
-		marker := "[version:minor]"
-		if pending == version.Major {
-			marker = "[version:major]"
+	pending, err := release.ResolveIntent(commits)
+	if err != nil {
+		return err
+	}
+	if o.mergeMethod == "squash" {
+		landed, err := release.ResolveIntent([]repository.Commit{{Message: pull.Title + "\n" + pull.Body}})
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("squash PR title or body must preserve %s; also keep it in the final squash message", marker)
+		if !landed.Preserves(pending) {
+			return fmt.Errorf("squash PR title or body must preserve %s; also keep it in the final squash message", pending.Marker())
+		}
 	}
 	return nil
 }
