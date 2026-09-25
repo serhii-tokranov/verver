@@ -35,13 +35,13 @@ jobs:
             -ignore 'unexpected key "queue" for "concurrency" section'
 
   trusted-tool:
-    if: github.event_name != 'merge_group'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted tool source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || 'refs/heads/main' }}
+          ref: refs/heads/main
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -88,7 +88,7 @@ jobs:
 
   version:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && !github.event.deleted
-    needs: [checks, trusted-tool]
+    needs: [checks]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -96,30 +96,9 @@ jobs:
     concurrency:
       group: verver-release
       queue: max
-      cancel-in-progress: false
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      sha: ${{ steps.version.outputs.sha }}
-      kind: ${{ steps.version.outputs.kind }}
-      status: ${{ steps.version.outputs.status }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: verver-finalizer
-          path: ${{ runner.temp }}/verver-tool
-      - name: Assign version
-        id: version
-        env:
-          VERVER_TOKEN: ${{ github.token }}
-        run: |
-          chmod +x "$RUNNER_TEMP/verver-tool/verver"
-          "$RUNNER_TEMP/verver-tool/verver" release \
-            --ref "$GITHUB_REF" --sha "$GITHUB_SHA" --serialized \
-            --github "$GITHUB_REPOSITORY" \
-            --remote-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
-            --github-output "$GITHUB_OUTPUT" --format json
+      - uses: serhii-tokranov/verver@v0.0.1
