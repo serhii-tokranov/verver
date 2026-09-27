@@ -1,0 +1,40 @@
+name: Version
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    concurrency:
+      group: verver-release
+      queue: max
+      cancel-in-progress: false
+    steps:
+      # Bootstrap from reviewed default-branch source. Consumer repositories use
+      # the released serhii-tokranov/verver Action instead.
+      - name: Check out trusted Verver source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          path: verver-tool
+          persist-credentials: false
+
+      - uses: ./verver-tool
+        with:
+          ref: refs/heads/${{ github.event.workflow_run.head_branch }}
+          sha: ${{ github.event.workflow_run.head_sha }}
+          workflow: .github/workflows/ci.yml

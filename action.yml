@@ -22,9 +22,6 @@ inputs:
   feature-pattern:
     description: Candidate suffix, -<label>.RC.
     default: -rc.RC
-  path:
-    description: Path to a complete checkout of the tested repository.
-    default: .
   token:
     description: Repository token with contents write and pull requests read permissions.
     default: ${{ github.token }}
@@ -47,6 +44,13 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check out tested revision
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.sha }}
+        path: .verver-repository
+        fetch-depth: 0
+        persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: '1.26.x'
@@ -65,7 +69,10 @@ runs:
       shell: bash
       env:
         VERVER_TOKEN: ${{ inputs.token }}
-        REPO_PATH: ${{ inputs.path }}
+        REPO_PATH: ${{ github.workspace }}/.verver-repository
+        TESTED_REF: ${{ inputs.ref }}
+        TESTED_SHA: ${{ inputs.sha }}
+        SOURCE_WORKFLOW: ${{ inputs.workflow }}
         MAIN_BRANCH: ${{ inputs.main-branch }}
         MAIN_PATTERN: ${{ inputs.main-pattern }}
         FEATURE_PATTERN: ${{ inputs.feature-pattern }}
@@ -77,8 +84,8 @@ runs:
           *) echo 'adopt-existing must be true or false' >&2; exit 2 ;;
         esac
         "$VERVER_BINARY" release --path "$REPO_PATH" \
-          --ref "${{ inputs.ref }}" --sha "${{ inputs.sha }}" --serialized \
-          --workflow "${{ inputs.workflow }}" \
+          --ref "$TESTED_REF" --sha "$TESTED_SHA" --serialized \
+          --workflow "$SOURCE_WORKFLOW" \
           --main-branch "$MAIN_BRANCH" --main-pattern "$MAIN_PATTERN" \
           --feature-pattern "$FEATURE_PATTERN" \
           --github "$GITHUB_REPOSITORY" \
