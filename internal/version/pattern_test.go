@@ -70,6 +70,20 @@ func TestInvalidTags(t *testing.T) {
 	}
 }
 
+func TestParseCore(t *testing.T) {
+	for _, value := range []string{"0.0.0", "1.2.3", "18446744073709551615.0.9"} {
+		core, err := ParseCore(value)
+		if err != nil || core.String() != value {
+			t.Fatalf("%q: %+v, %v", value, core, err)
+		}
+	}
+	for _, value := range []string{"", "1", "1.2", "1.2.3.4", "01.2.3", "1.-2.3", "18446744073709551616.0.0"} {
+		if _, err := ParseCore(value); err == nil {
+			t.Errorf("accepted %q", value)
+		}
+	}
+}
+
 func FuzzRoundTrip(f *testing.F) {
 	for _, tag := range []string{"v0.0.0", "v1.2.3-rc.1", "v1.2.3-rc.10", "v01.2.3", "v1.2.3+meta"} {
 		f.Add(tag)

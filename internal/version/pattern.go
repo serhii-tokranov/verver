@@ -101,19 +101,11 @@ func (p Pattern) Parse(tag string) (Version, error) {
 	}
 	base := strings.TrimPrefix(tag, p.prefix)
 	core, suffix, hasSuffix := strings.Cut(base, "-")
-	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
-		return Version{}, fmt.Errorf("tag must contain three numeric components")
+	parsed, err := ParseCore(core)
+	if err != nil {
+		return Version{}, err
 	}
-	var values [3]uint64
-	for i, part := range parts {
-		n, err := number(part)
-		if err != nil {
-			return Version{}, fmt.Errorf("invalid core component: %w", err)
-		}
-		values[i] = n
-	}
-	v := Version{Core: Core{values[0], values[1], values[2]}}
+	v := Version{Core: parsed}
 	if hasSuffix {
 		prefix := p.label + "."
 		if !strings.HasPrefix(suffix, prefix) {
@@ -129,6 +121,24 @@ func (p Pattern) Parse(tag string) (Version, error) {
 		v.RC = n
 	}
 	return v, nil
+}
+
+// ParseCore accepts a canonical MAJOR.MINOR.PATCH value without a tag prefix
+// or prerelease suffix.
+func ParseCore(value string) (Core, error) {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return Core{}, fmt.Errorf("version must contain three numeric components")
+	}
+	var values [3]uint64
+	for i, part := range parts {
+		n, err := number(part)
+		if err != nil {
+			return Core{}, fmt.Errorf("invalid version component: %w", err)
+		}
+		values[i] = n
+	}
+	return Core{Major: values[0], Minor: values[1], Patch: values[2]}, nil
 }
 
 func number(s string) (uint64, error) {

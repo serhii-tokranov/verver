@@ -12,7 +12,32 @@ main       squash feature-a [version:minor]    v0.1.0
 feature-c  docs: update examples               v0.1.1-rc.1
 ```
 
-Patch is the default—even for `feat:` commits. Include `[version:minor]` or `[version:major]` anywhere in a commit message to request a larger bump. Major wins over minor; minor resets patch, and major resets both minor and patch.
+## Version requests
+
+Patch is the default—even for `feat:` commits. Include a version marker anywhere in a commit message to request another target:
+
+| Marker | From `v1.2.3` |
+| --- | --- |
+| No marker | `v1.2.4` |
+| `[version:minor]` | `v1.3.0` |
+| `[version:major]` | `v2.0.0` |
+| `[version:set=2.5.0]` | `v2.5.0` |
+
+Major wins over minor; minor resets patch, and major resets both minor and patch.
+
+### Exact versions
+
+Use an exact version for migrations, coordinated releases, or aligning an existing project:
+
+```text
+chore: [version:set=2.5.0] align release version
+```
+
+On a feature branch, Verver creates candidates such as `v2.5.0-rc.1`. When the change reaches main, it creates `v2.5.0`. Specify only the numeric `MAJOR.MINOR.PATCH` value; configured patterns add the prefix and candidate suffix.
+
+The requested version must be greater than the latest stable version. Existing tags are never replaced or moved. Different exact versions in the same pending history are an error, as is combining an exact marker with a minor or major marker. The request remains active until released, and squash merges must preserve it in the final commit message. If another release reaches or passes the requested version first, the pending exact request fails.
+
+Verver does not support downgrades. To restore older code, revert it and publish a new higher version. Maintenance releases for older major versions require separate release streams, which are not currently supported.
 
 ## GitHub Actions
 
@@ -36,12 +61,12 @@ version:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: serhii-tokranov/verver@v0.0.3
+    - uses: serhii-tokranov/verver@v0.1.0
 ```
 
 The Action builds its pinned source with Go; no Docker image or separate binary installation is needed. It uses `github.token` by default. Repository or organization tag rules must allow that token to create the selected tags. PR and merge-queue events never assign versions, and branch-push triggers avoid tag-triggered loops.
 
-This repository uses the same pinned Action in its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. Pull-request intent validation separately builds its checker from trusted main code.
+This repository bootstraps each release with the previous stable Action in its own [CI workflow](.github/workflows/ci.yml). It runs formatting, tests, vet, build, and workflow lint before assigning versions. Pull-request intent validation separately builds its checker from trusted main code.
 
 ### Configuration
 
@@ -60,7 +85,7 @@ For example:
 
 ```yaml
 
-- uses: serhii-tokranov/verver@v0.0.3
+- uses: serhii-tokranov/verver@v0.1.0
   with:
     main-pattern: 'release-MAJOR.MINOR.PATCH'
     feature-pattern: '-preview.RC'
@@ -71,7 +96,7 @@ Outputs are `tag`, `sha`, `kind` (`stable` or `rc`), and `status` (`created` or 
 ## Release behavior
 
 - The initial baseline is `0.0.0`. A normal first main push produces `v0.0.1`.
-- Features target the next patch of the latest stable release unless their unreleased commits request minor or major.
+- Features target the next patch of the latest stable release unless their unreleased commits request minor, major, or an exact higher version.
 - RC counters start at one and are shared across branches **for the same numeric target**. A larger counter means a later assignment, not that it contains another branch's code.
 - A pending bump persists until its changes are released. It is not reapplied on every feature push. If main overtakes the target, the next feature push applies the pending intent against the new baseline.
 - Merging to main creates a stable version. GitHub merge provenance records which original feature commits were consumed, including squash and rebase merges. Their IDs remain in the stable tag even if old PR objects are later pruned.
