@@ -14,7 +14,6 @@ Usage:
   verver --version
   verver next --ref refs/heads/<branch> [options]
   verver release --ref refs/heads/<branch> --serialized [options]
-  verver check-pr --github owner/repo --pr <number> [options]
 
 Run a command with --help for its options. Release requires a shared CI lock.
 
@@ -31,7 +30,7 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 
 // RunContext supports cancellation of repository and network operations.
 func RunContext(ctx context.Context, args []string, stdout, stderr io.Writer, version string) int {
-	if len(args) > 0 && (args[0] == "next" || args[0] == "release" || args[0] == "check-pr") {
+	if len(args) > 0 && (args[0] == "next" || args[0] == "release") {
 		return runCommand(ctx, args[0], args[1:], stdout, stderr)
 	}
 	var output string

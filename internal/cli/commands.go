@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -21,11 +22,11 @@ import (
 )
 
 type options struct {
-	config                                                                                              release.Config
-	path, ref, sha, mainRef, remote, remoteURL, github, apiURL, format, output, provenance, mergeMethod string
-	adopt, serialized                                                                                   bool
-	pr                                                                                                  int
-	timeout                                                                                             time.Duration
+	config                                                                                 release.Config
+	path, ref, sha, mainRef, remote, remoteURL, github, apiURL, format, output, provenance string
+	workflow                                                                               string
+	adopt, serialized                                                                      bool
+	timeout                                                                                time.Duration
 }
 
 type inputError struct{ error }
@@ -50,10 +51,9 @@ func parseOptions(command string, args []string, stderr io.Writer) (options, err
 	fs.StringVar(&o.format, "format", "tag", "output format: tag or json")
 	fs.StringVar(&o.output, "github-output", "", "append outputs to this GitHub Actions output file")
 	fs.StringVar(&o.provenance, "provenance", "", "verified merged-source JSON file (non-GitHub integrations)")
-	fs.StringVar(&o.mergeMethod, "merge-method", "squash", "PR check strategy: squash, merge, rebase")
+	fs.StringVar(&o.workflow, "workflow", ".github/workflows/ci.yml", "trusted source workflow path for GitHub release")
 	fs.BoolVar(&o.adopt, "adopt-existing", false, "explicitly adopt existing unmanaged version tags")
 	fs.BoolVar(&o.serialized, "serialized", false, "confirm this finalization is protected by a shared CI lock")
-	fs.IntVar(&o.pr, "pr", 0, "pull request number for check-pr")
 	fs.DurationVar(&o.timeout, "timeout", 5*time.Minute, "maximum command duration")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -64,16 +64,11 @@ func parseOptions(command string, args []string, stderr io.Writer) (options, err
 	if fs.NArg() != 0 {
 		return o, invalid("unexpected positional arguments")
 	}
-	if command != "check-pr" {
-		if err := release.ValidateRef(o.ref); err != nil {
-			return o, invalid("%v", err)
-		}
+	if err := release.ValidateRef(o.ref); err != nil {
+		return o, invalid("%v", err)
 	}
 	if command == "release" && !o.serialized {
 		return o, invalid("release requires --serialized and a shared CI lock covering every writer")
-	}
-	if command == "check-pr" && (o.pr <= 0 || o.github == "") {
-		return o, invalid("check-pr requires --pr and --github owner/repository")
 	}
 	if o.format != "tag" && o.format != "json" {
 		return o, invalid("format must be tag or json")
@@ -81,8 +76,8 @@ func parseOptions(command string, args []string, stderr io.Writer) (options, err
 	if o.timeout <= 0 {
 		return o, invalid("timeout must be positive")
 	}
-	if o.mergeMethod != "squash" && o.mergeMethod != "merge" && o.mergeMethod != "rebase" {
-		return o, invalid("unsupported merge method")
+	if path.Clean(o.workflow) != o.workflow || !strings.HasPrefix(o.workflow, ".github/workflows/") || !(strings.HasSuffix(o.workflow, ".yml") || strings.HasSuffix(o.workflow, ".yaml")) {
+		return o, invalid("workflow must be a .github/workflows/*.yml or *.yaml path")
 	}
 	if o.sha != "" {
 		if _, err := release.ParseHash(o.sha); err != nil {
@@ -109,9 +104,7 @@ func runCommand(ctx context.Context, command string, args []string, stdout, stde
 	ctx, cancel := context.WithTimeout(ctx, o.timeout)
 	defer cancel()
 	result, err := execute(ctx, command, o)
-	if err == nil && command == "check-pr" {
-		_, err = fmt.Fprintln(stdout, "version intent check passed")
-	} else if err == nil {
+	if err == nil {
 		if o.output != "" {
 			err = writeOutputs(o.output, result)
 		}
@@ -150,9 +143,6 @@ func execute(ctx context.Context, command string, o options) (release.Result, er
 		return empty, err
 	}
 	pattern, _ := version.NewPattern(o.config.MainPattern, o.config.FeaturePattern)
-	if command == "check-pr" {
-		return empty, checkPR(ctx, reader, o, pattern)
-	}
 	var hash plumbing.Hash
 	if o.sha == "" {
 		hash, err = reader.Resolve("HEAD")
@@ -192,7 +182,7 @@ func execute(ctx context.Context, command string, o options) (release.Result, er
 		// remote reachability assertion, which is required again during release.
 		return release.Calculate(ctx, reader, release.State{Tags: tags, Main: main, Branch: hash}, req)
 	}
-	if err := validatePushEvent(o, hash); err != nil {
+	if err := validateGitHubEvent(o, hash); err != nil {
 		return empty, err
 	}
 	if os.Getenv("GITHUB_ACTIONS") == "true" && o.github == "" {
@@ -264,93 +254,51 @@ func connect(reader *repository.Reader, o options) (*repository.Remote, *gh.Clie
 	return remote, client, nil
 }
 
-func validatePushEvent(o options, hash plumbing.Hash) error {
+func validateGitHubEvent(o options, hash plumbing.Hash) error {
 	if os.Getenv("GITHUB_ACTIONS") != "true" {
 		return nil
 	}
-	if os.Getenv("GITHUB_EVENT_NAME") != "push" {
-		return invalid("GitHub tag creation is only allowed for branch push events")
-	}
-	if os.Getenv("GITHUB_REF") != o.ref || os.Getenv("GITHUB_SHA") != hash.String() {
-		return invalid("requested ref/SHA does not match the tested push event")
+	if os.Getenv("GITHUB_EVENT_NAME") != "workflow_run" {
+		return invalid("GitHub tag creation is only allowed from a trusted workflow_run finalizer")
 	}
 	data, err := os.ReadFile(os.Getenv("GITHUB_EVENT_PATH"))
 	if err != nil {
-		return fmt.Errorf("read push event: %w", err)
+		return fmt.Errorf("read workflow_run event: %w", err)
 	}
 	var event struct {
-		Ref        string `json:"ref"`
-		After      string `json:"after"`
-		Deleted    bool   `json:"deleted"`
+		Action     string `json:"action"`
 		Repository struct {
 			FullName string `json:"full_name"`
 		} `json:"repository"`
+		WorkflowRun struct {
+			Conclusion string `json:"conclusion"`
+			Event      string `json:"event"`
+			HeadBranch string `json:"head_branch"`
+			HeadSHA    string `json:"head_sha"`
+			Path       string `json:"path"`
+			Repository struct {
+				FullName string `json:"full_name"`
+			} `json:"head_repository"`
+		} `json:"workflow_run"`
 	}
 	if err := json.Unmarshal(data, &event); err != nil {
 		return err
 	}
-	if event.Deleted || event.Ref != o.ref || event.After != hash.String() || !strings.EqualFold(event.Repository.FullName, os.Getenv("GITHUB_REPOSITORY")) {
-		return invalid("push event does not match the requested assignment")
+	expectedRepo := os.Getenv("GITHUB_REPOSITORY")
+	if event.Action != "completed" || event.WorkflowRun.Conclusion != "success" || event.WorkflowRun.Event != "push" {
+		return invalid("workflow_run must be a completed successful branch push")
+	}
+	if event.WorkflowRun.HeadBranch == "" || o.ref != "refs/heads/"+event.WorkflowRun.HeadBranch || event.WorkflowRun.HeadSHA != hash.String() {
+		return invalid("requested ref/SHA does not match the tested workflow run")
+	}
+	if event.WorkflowRun.Path != o.workflow {
+		return invalid("workflow_run path does not match the configured trusted workflow")
+	}
+	if !strings.EqualFold(event.Repository.FullName, expectedRepo) || !strings.EqualFold(event.WorkflowRun.Repository.FullName, expectedRepo) {
+		return invalid("workflow_run repository does not match the current repository")
 	}
 	if o.github != "" && !strings.EqualFold(o.github, event.Repository.FullName) {
-		return invalid("GitHub repository does not match push event")
-	}
-	return nil
-}
-
-func checkPR(ctx context.Context, reader *repository.Reader, o options, p version.Pattern) error {
-	remote, client, err := connect(reader, o)
-	if err != nil {
-		return err
-	}
-	if client == nil {
-		return invalid("GitHub client is required")
-	}
-	pull, err := client.Pull(ctx, o.pr)
-	if err != nil {
-		return err
-	}
-	if pull.Merged {
-		return fmt.Errorf("PR is already merged")
-	}
-	if pull.Base.Ref != o.config.MainBranch {
-		return fmt.Errorf("PR does not target configured main branch")
-	}
-	hash, err := release.ParseHash(pull.Head.SHA)
-	if err != nil {
-		return err
-	}
-	if o.sha != "" && o.sha != pull.Head.SHA {
-		return fmt.Errorf("PR head changed; rerun checks on its current head")
-	}
-	if err := remote.EnsureSource(ctx, hash, o.pr); err != nil {
-		return err
-	}
-	snapshot, err := remote.Refresh(ctx, p)
-	if err != nil {
-		return err
-	}
-	_, consumed, err := release.Inspect(snapshot.Tags, o.config, o.adopt)
-	if err != nil {
-		return err
-	}
-	excluded := []plumbing.Hash{snapshot.Heads["refs/heads/"+o.config.MainBranch]}
-	commits, err := reader.Range(ctx, hash, excluded, consumed)
-	if err != nil {
-		return err
-	}
-	pending, err := release.ResolveIntent(commits)
-	if err != nil {
-		return err
-	}
-	if o.mergeMethod == "squash" {
-		landed, err := release.ResolveIntent([]repository.Commit{{Message: pull.Title + "\n" + pull.Body}})
-		if err != nil {
-			return err
-		}
-		if !landed.Preserves(pending) {
-			return fmt.Errorf("squash PR title or body must preserve %s; also keep it in the final squash message", pending.Marker())
-		}
+		return invalid("GitHub repository does not match workflow_run event")
 	}
 	return nil
 }

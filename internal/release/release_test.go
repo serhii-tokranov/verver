@@ -20,6 +20,13 @@ func (g graph) add(message string, parents ...plumbing.Hash) plumbing.Hash {
 	g[hash] = repository.Commit{Hash: hash, Message: message, Parents: parents}
 	return hash
 }
+func (g graph) empty(message string, parent plumbing.Hash) plumbing.Hash {
+	hash := g.add(message, parent)
+	commit := g[hash]
+	commit.Empty = true
+	g[hash] = commit
+	return hash
+}
 func (g graph) Commit(h plumbing.Hash) (repository.Commit, error) {
 	c, ok := g[h]
 	if !ok {
@@ -92,7 +99,7 @@ func assign(t *testing.T, g graph, state *State, ref string, head plumbing.Hash,
 	return r
 }
 
-func TestReleaseSequence(t *testing.T) {
+func TestReleaseSequenceAndLatestBumpWins(t *testing.T) {
 	g := graph{}
 	root := g.add("initial")
 	s := State{Main: root}
@@ -101,83 +108,93 @@ func TestReleaseSequence(t *testing.T) {
 	b := g.add("feature B", root)
 	assign(t, g, &s, "a", a, "v0.0.2-rc.1")
 	assign(t, g, &s, "b", b, "v0.0.2-rc.2")
-	a2 := g.add("request [version:minor]", a)
-	assign(t, g, &s, "a", a2, "v0.1.0-rc.1")
+	a2 := g.empty("verver: bump major", a)
+	assign(t, g, &s, "a", a2, "v1.0.0-rc.1")
+	a3 := g.empty("verver: bump minor", a2)
+	assign(t, g, &s, "a", a3, "v0.1.0-rc.1")
+	a4 := g.add("more work", a3)
+	assign(t, g, &s, "a", a4, "v0.1.0-rc.2")
+
 	s.Main = g.add("merge B", root, b)
 	assign(t, g, &s, "main", s.Main, "v0.0.2")
-	a3 := g.add("more work", a2)
-	assign(t, g, &s, "a", a3, "v0.1.0-rc.2")
-	// B independently releases the same minor target; A keeps pending intent.
-	s.Main = g.add("another [version:minor]", s.Main)
-	assign(t, g, &s, "main", s.Main, "v0.1.0")
-	a4 := g.add("still pending", a3)
-	assign(t, g, &s, "a", a4, "v0.2.0-rc.1")
-	// Retrying A's old push keeps the earlier target, even after branch deletion.
-	retry, err := Calculate(context.Background(), g, State{Tags: s.Tags}, Request{Config: testConfig(), Ref: "refs/heads/a", Commit: a2})
-	if err != nil || retry.Tag != "v0.1.0-rc.1" || retry.Status != "reused" {
-		t.Fatal(retry, err)
+	a5 := g.add("still pending", a4)
+	assign(t, g, &s, "a", a5, "v0.1.0-rc.3")
+
+	landing := g.add("squash A", s.Main)
+	s.Main = landing
+	result := assign(t, g, &s, "main", landing, "v0.1.0", Source{Head: a5.String(), Pull: 1, Landing: landing.String(), Commits: []string{a.String(), a2.String(), a3.String(), a4.String(), a5.String()}})
+	if len(result.Assignment.Consumed) != 5 {
+		t.Fatal(result.Assignment)
 	}
-	// Squash preserves intent and records original history as consumed.
-	s.Main = g.add("squash A [version:minor]", s.Main)
-	assign(t, g, &s, "main", s.Main, "v0.2.0", Source{Head: a4.String(), Pull: 1})
-	a5 := g.add("reuse branch without repeating old intent", a4)
-	assign(t, g, &s, "a", a5, "v0.2.1-rc.1")
-	major := g.add("body\n[version:major]\n[version:minor]", a5)
-	assign(t, g, &s, "a", major, "v1.0.0-rc.1")
+	after := g.add("work after release", a5)
+	assign(t, g, &s, "a", after, "v0.1.1-rc.1")
 }
 
-func TestExactVersionSequence(t *testing.T) {
+func TestExactVersionUsesConfiguredMainFormat(t *testing.T) {
 	g := graph{}
 	root := g.add("initial")
 	state := State{Main: root}
 	assign(t, g, &state, "main", root, "v0.0.1")
-
-	exact := g.add("chore: [version:set=2.5.0] align release", root)
+	exact := g.empty("verver: bump v2.5.0", root)
 	assign(t, g, &state, "a", exact, "v2.5.0-rc.1")
 	continued := g.add("more work", exact)
 	assign(t, g, &state, "a", continued, "v2.5.0-rc.2")
-	other := g.add("chore: [version:set=2.5.0] same target", root)
-	assign(t, g, &state, "b", other, "v2.5.0-rc.3")
 
-	state.Main = g.add("squash: [version:set=2.5.0] align release", root)
-	result := assign(t, g, &state, "main", state.Main, "v2.5.0", Source{Head: continued.String(), Pull: 9})
-	if len(result.Assignment.Consumed) != 2 {
-		t.Fatal(result.Assignment)
+	landing := g.add("squash exact release", root)
+	state.Main = landing
+	assign(t, g, &state, "main", landing, "v2.5.0", Source{Head: continued.String(), Pull: 9, Landing: landing.String(), Commits: []string{exact.String(), continued.String()}})
+
+	custom := testConfig()
+	custom.MainPattern = "release-MAJOR.MINOR.PATCH"
+	p, _ := version.NewPattern(custom.MainPattern, custom.FeaturePattern)
+	commit := repository.Commit{Hash: plumbing.NewHash(strings.Repeat("a", 40)), Parents: []plumbing.Hash{root}, Message: "verver: bump release-3.4.5", Empty: true}
+	intent, err := ResolveIntent([]repository.Commit{commit}, p)
+	if err != nil || intent.Exact == nil || intent.Exact.String() != "3.4.5" {
+		t.Fatal(intent, err)
 	}
-	after := g.add("work after exact release", continued)
-	assign(t, g, &state, "a", after, "v2.5.1-rc.1")
+	commit.Message = "verver: bump v3.4.5"
+	if _, err := ResolveIntent([]repository.Commit{commit}, p); err == nil {
+		t.Fatal("accepted an exact version that does not match the configured prefix")
+	}
 }
 
-func TestExactVersionPolicies(t *testing.T) {
-	commit := func(message string) []repository.Commit {
-		return []repository.Commit{{Hash: plumbing.NewHash(strings.Repeat("a", 40)), Message: message}}
+func TestBumpCommandValidation(t *testing.T) {
+	p, _ := version.NewPattern("", "")
+	parent := plumbing.NewHash(strings.Repeat("b", 40))
+	valid := func(message string) repository.Commit {
+		return repository.Commit{Hash: plumbing.NewHash(strings.Repeat("a", 40)), Parents: []plumbing.Hash{parent}, Message: message, Empty: true}
 	}
-	for _, tt := range []struct {
-		message string
-		want    string
-	}{
-		{"[version:set=1.2.3]", "1.2.3"},
-		{"[version:set=1.2.3] and again [version:set=1.2.3]", "1.2.3"},
-	} {
-		intent, err := ResolveIntent(commit(tt.message))
-		if err != nil || intent.Exact == nil || intent.Exact.String() != tt.want {
-			t.Fatalf("%q: %+v, %v", tt.message, intent, err)
+	for _, message := range []string{"verver: bump minor", "verver: bump major", "verver: bump v1.2.3"} {
+		if intent, err := ResolveIntent([]repository.Commit{valid(message)}, p); err != nil || !intent.Found {
+			t.Fatalf("%q: %+v, %v", message, intent, err)
 		}
 	}
-	for _, message := range []string{
-		"[version:set=1.2.3",
-		"[version:set=1.2]",
-		"[version:set=01.2.3]",
-		"[version:set=1.2.3] [version:set=1.2.4]",
-		"[version:set=1.2.3] [version:minor]",
-		"[version:set=1.2.3] [version:major]",
-	} {
-		if _, err := ResolveIntent(commit(message)); err == nil {
+	for _, message := range []string{"verver: bump", "verver: bump patch", "verver: bump 1.2.3", "verver: bump v01.2.3", "verver: bump minor\nbody"} {
+		if _, err := ResolveIntent([]repository.Commit{valid(message)}, p); err == nil {
 			t.Errorf("accepted %q", message)
 		}
 	}
+	content := valid("verver: bump minor")
+	content.Empty = false
+	merge := valid("verver: bump major")
+	merge.Parents = append(merge.Parents, plumbing.NewHash(strings.Repeat("c", 40)))
+	rootCommand := valid("verver: bump v2.0.0")
+	rootCommand.Parents = nil
+	for _, commit := range []repository.Commit{content, merge, rootCommand} {
+		if _, err := ResolveIntent([]repository.Commit{commit}, p); err == nil || !strings.Contains(err.Error(), "empty, single-parent") {
+			t.Fatal(err)
+		}
+	}
+	normal := valid("feat: mention verver: bump major")
+	if intent, err := ResolveIntent([]repository.Commit{normal}, p); err != nil || intent.Found {
+		t.Fatal(intent, err)
+	}
+}
 
-	intent, err := ResolveIntent(commit("[version:set=1.2.3]"))
+func TestExactVersionMustAdvanceStable(t *testing.T) {
+	p, _ := version.NewPattern("", "")
+	commit := repository.Commit{Parents: []plumbing.Hash{plumbing.NewHash(strings.Repeat("b", 40))}, Message: "verver: bump v1.2.3", Empty: true}
+	intent, err := ResolveIntent([]repository.Commit{commit}, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,33 +203,6 @@ func TestExactVersionPolicies(t *testing.T) {
 			t.Errorf("accepted exact target %s after %s: %v", intent.Exact, base, err)
 		}
 	}
-	if got, err := intent.Target(version.Core{Major: 1, Minor: 2, Patch: 2}); err != nil || got != (version.Core{Major: 1, Minor: 2, Patch: 3}) {
-		t.Fatal(got, err)
-	}
-
-	minor, _ := ResolveIntent(commit("[version:minor]"))
-	major, _ := ResolveIntent(commit("[version:major]"))
-	patch, _ := ResolveIntent(commit("normal"))
-	if !major.Preserves(minor) || !intent.Preserves(patch) || minor.Preserves(intent) || patch.Preserves(minor) {
-		t.Fatal("intent preservation rules are inconsistent")
-	}
-}
-
-func TestExactVersionMarkerMustSurviveRewrite(t *testing.T) {
-	g := graph{}
-	root := g.add("root")
-	state := State{Main: root}
-	assign(t, g, &state, "main", root, "v0.0.1")
-	source := g.add("[version:set=2.0.0]", root)
-	state.Main = g.add("squash without marker", root)
-	state.Branch = state.Main
-	_, err := Calculate(context.Background(), g, state, Request{
-		Config: testConfig(), Ref: "refs/heads/main", Commit: state.Main,
-		Sources: []Source{{Head: source.String(), Pull: 10}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "lost") {
-		t.Fatal(err)
-	}
 }
 
 func TestPolicies(t *testing.T) {
@@ -220,25 +210,17 @@ func TestPolicies(t *testing.T) {
 	root := g.add("root")
 	s := State{Main: root}
 	assign(t, g, &s, "main", root, "v0.0.1")
-	marked := g.add("[version:minor]", root)
-	badSquash := g.add("squash missing marker", root)
-	req := Request{Config: testConfig(), Ref: "refs/heads/main", Commit: badSquash, Sources: []Source{{Head: marked.String()}}}
-	s.Main = badSquash
-	s.Branch = badSquash
-	if _, err := Calculate(context.Background(), g, s, req); err == nil || !strings.Contains(err.Error(), "lost") {
-		t.Fatal(err)
-	}
-	// A main release overtaking an older unassigned push makes that push stale.
-	later := g.add("later", badSquash)
+	old := g.add("old", root)
+	later := g.add("later", old)
 	s.Main = later
 	assign(t, g, &s, "main", later, "v0.0.2")
-	req.Sources = nil
+	req := Request{Config: testConfig(), Ref: "refs/heads/main", Commit: old}
 	s.Branch = later
 	if _, err := Calculate(context.Background(), g, s, req); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatal(err)
 	}
 	req.Ref = "refs/heads/feature"
-	req.Commit = marked
+	s.Branch = g.add("other branch", root)
 	if _, err := Calculate(context.Background(), g, s, req); err == nil || !strings.Contains(err.Error(), "reachable") {
 		t.Fatal(err)
 	}
@@ -387,9 +369,9 @@ func TestConsumedHistorySurvivesSourcePruning(t *testing.T) {
 	root := g.add("root")
 	state := State{Main: root}
 	assign(t, g, &state, "main", root, "v0.0.1")
-	marked := g.add("feature [version:minor]", root)
+	marked := g.empty("verver: bump minor", root)
 	source := g.add("more work", marked)
-	state.Main = g.add("squash [version:minor]", root)
+	state.Main = g.add("squash feature", root)
 	result := assign(t, g, &state, "main", state.Main, "v0.1.0", Source{Head: source.String(), Pull: 7})
 	if len(result.Assignment.Consumed) != 2 {
 		t.Fatal(result.Assignment)
@@ -408,11 +390,11 @@ func TestRebaseConsumesOriginalIDs(t *testing.T) {
 	root := g.add("root")
 	state := State{Main: root}
 	assign(t, g, &state, "main", root, "v0.0.1")
-	original := g.add("feature [version:minor]", root)
+	original := g.empty("verver: bump minor", root)
 	intervening := g.add("main changed", root)
 	state.Main = intervening
 	assign(t, g, &state, "main", intervening, "v0.0.2")
-	state.Main = g.add("feature [version:minor]", intervening)
+	state.Main = g.empty("verver: bump minor", intervening)
 	assign(t, g, &state, "main", state.Main, "v0.1.0", Source{Head: original.String(), Pull: 8})
 	continued := g.add("continued after rebase merge", original)
 	assign(t, g, &state, "feature", continued, "v0.1.1-rc.1")
