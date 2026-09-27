@@ -161,27 +161,54 @@ func TestGitHubWorkflowRunGate(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", o.github)
 	path := filepath.Join(t.TempDir(), "event.json")
 	t.Setenv("GITHUB_EVENT_PATH", path)
-	event := map[string]any{
-		"action":     "completed",
-		"repository": map[string]string{"full_name": o.github},
-		"workflow_run": map[string]any{
-			"conclusion": "success", "event": "push", "head_branch": "main", "head_sha": hash.String(),
-			"path": o.workflow, "head_repository": map[string]string{"full_name": o.github},
-		},
+	event := func() map[string]any {
+		return map[string]any{
+			"action":     "completed",
+			"repository": map[string]string{"full_name": o.github},
+			"workflow_run": map[string]any{
+				"conclusion": "success", "event": "push", "head_branch": "main", "head_sha": hash.String(),
+				"path": o.workflow, "head_repository": map[string]string{"full_name": o.github},
+			},
+		}
 	}
-	data, _ := json.Marshal(event)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
+	write := func(value map[string]any) {
+		t.Helper()
+		data, _ := json.Marshal(value)
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	write(event())
 	if err := validateGitHubEvent(o, hash); err != nil {
 		t.Fatal(err)
 	}
-	event["workflow_run"].(map[string]any)["conclusion"] = "failure"
-	data, _ = json.Marshal(event)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
+
+	cases := map[string]func(map[string]any){
+		"action": func(e map[string]any) { e["action"] = "requested" },
+		"conclusion": func(e map[string]any) {
+			e["workflow_run"].(map[string]any)["conclusion"] = "failure"
+		},
+		"event":  func(e map[string]any) { e["workflow_run"].(map[string]any)["event"] = "pull_request" },
+		"branch": func(e map[string]any) { e["workflow_run"].(map[string]any)["head_branch"] = "other" },
+		"sha": func(e map[string]any) {
+			e["workflow_run"].(map[string]any)["head_sha"] = strings.Repeat("c", 40)
+		},
+		"path": func(e map[string]any) { e["workflow_run"].(map[string]any)["path"] = ".github/workflows/other.yml" },
+		"repository": func(e map[string]any) {
+			e["repository"] = map[string]string{"full_name": "other/repo"}
+		},
+		"head repository": func(e map[string]any) {
+			e["workflow_run"].(map[string]any)["head_repository"] = map[string]string{"full_name": "fork/repo"}
+		},
 	}
-	if err := validateGitHubEvent(o, hash); err == nil {
-		t.Fatal("failed source workflow accepted")
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			value := event()
+			mutate(value)
+			write(value)
+			if err := validateGitHubEvent(o, hash); err == nil {
+				t.Fatal("mismatched workflow run accepted")
+			}
+		})
 	}
 }
