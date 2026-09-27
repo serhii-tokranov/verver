@@ -22,6 +22,8 @@ func TestSources(t *testing.T) {
 			t.Error("missing auth")
 		}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/pulls/1/commits"):
+			fmt.Fprintf(w, `[{"sha":%q}]`, head)
 		case strings.Contains(r.URL.Path, "/commits/"):
 			pages++
 			if r.URL.Query().Get("page") == "1" {
@@ -50,7 +52,7 @@ func TestSources(t *testing.T) {
 	}
 	client.http.Transport = handlerTransport{handler}
 	sources, err := client.Sources(context.Background(), []repository.Commit{{Hash: plumbing.NewHash(landing)}}, "main")
-	if err != nil || len(sources) != 1 || sources[0].Head != head || sources[0].Pull != 1 || pages != 2 || details != 3 {
+	if err != nil || len(sources) != 1 || sources[0].Head != head || sources[0].Pull != 1 || sources[0].Landing != landing || len(sources[0].Commits) != 1 || pages != 2 || details != 3 {
 		t.Fatal(sources, err, pages, details)
 	}
 }

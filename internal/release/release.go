@@ -66,8 +66,10 @@ func ParseHash(s string) (plumbing.Hash, error) {
 // Source identifies original history integrated by a rewritten merge. Pull is
 // optional for other integrations; GitHub uses it to retrieve preserved heads.
 type Source struct {
-	Head string `json:"head"`
-	Pull int    `json:"pull,omitempty"`
+	Head    string   `json:"head"`
+	Pull    int      `json:"pull,omitempty"`
+	Landing string   `json:"landing,omitempty"`
+	Commits []string `json:"commits,omitempty"`
 }
 
 type Assignment struct {
@@ -120,6 +122,16 @@ func Decode(tag repository.Tag) (*Assignment, error) {
 	for _, src := range a.Sources {
 		if _, err := ParseHash(src.Head); err != nil || src.Pull < 0 {
 			return nil, fmt.Errorf("tag %s has invalid source metadata", tag.Name)
+		}
+		if src.Landing != "" {
+			if _, err := ParseHash(src.Landing); err != nil {
+				return nil, fmt.Errorf("tag %s has invalid source landing", tag.Name)
+			}
+		}
+		for _, id := range src.Commits {
+			if _, err := ParseHash(id); err != nil {
+				return nil, fmt.Errorf("tag %s has invalid source commit", tag.Name)
+			}
 		}
 	}
 	for _, id := range a.Consumed {
@@ -214,54 +226,48 @@ func Inspect(tags []repository.Tag, c Config, adopt bool) (*repository.Tag, []pl
 	return stable, consumed, nil
 }
 
-const exactMarkerPrefix = "[version:set="
+const bumpCommandPrefix = "verver: bump"
 
-// VersionIntent is the strongest version request in a pending commit range.
-// Exact targets are deliberately separate from relative major/minor bumps.
+// VersionIntent is the latest explicit request in logical newest-first order.
 type VersionIntent struct {
 	Bump  version.Bump
 	Exact *version.Core
+	Found bool
 }
 
-// ResolveIntent validates version markers and returns one unambiguous request.
-func ResolveIntent(commits []repository.Commit) (VersionIntent, error) {
+// ResolveIntent validates every reserved command and returns the first one.
+// Commands must be the complete message of empty, single-parent commits.
+func ResolveIntent(commits []repository.Commit, pattern version.Pattern) (VersionIntent, error) {
 	intent := VersionIntent{Bump: version.Patch}
-	relative := false
 	for _, commit := range commits {
-		if strings.Contains(commit.Message, "[version:major]") {
-			intent.Bump = version.Major
-			relative = true
-		} else if strings.Contains(commit.Message, "[version:minor]") {
-			if intent.Bump < version.Minor {
-				intent.Bump = version.Minor
-			}
-			relative = true
+		message := strings.TrimSpace(commit.Message)
+		if !strings.HasPrefix(message, bumpCommandPrefix) {
+			continue
 		}
-		message := commit.Message
-		for {
-			start := strings.Index(message, exactMarkerPrefix)
-			if start < 0 {
-				break
-			}
-			value := message[start+len(exactMarkerPrefix):]
-			end := strings.IndexByte(value, ']')
-			if end < 0 {
-				return VersionIntent{}, fmt.Errorf("malformed exact version marker in %s", intentLocation(commit))
-			}
-			core, err := version.ParseCore(value[:end])
-			if err != nil {
-				return VersionIntent{}, fmt.Errorf("invalid exact version marker in %s: %w", intentLocation(commit), err)
-			}
-			if intent.Exact != nil && *intent.Exact != core {
-				return VersionIntent{}, fmt.Errorf("conflicting exact version markers %s and %s", intent.Exact, core.String())
-			}
-			copy := core
-			intent.Exact = &copy
-			message = value[end+1:]
+		if len(commit.Parents) != 1 || !commit.Empty {
+			return VersionIntent{}, fmt.Errorf("%s must be an empty, single-parent commit", intentLocation(commit))
 		}
-	}
-	if intent.Exact != nil && relative {
-		return VersionIntent{}, fmt.Errorf("exact version marker %s cannot be combined with minor or major markers", intent.Marker())
+		parsed := VersionIntent{Bump: version.Patch, Found: true}
+		switch message {
+		case bumpCommandPrefix + " minor":
+			parsed.Bump = version.Minor
+		case bumpCommandPrefix + " major":
+			parsed.Bump = version.Major
+		default:
+			value, ok := strings.CutPrefix(message, bumpCommandPrefix+" ")
+			if !ok || value == "" {
+				return VersionIntent{}, fmt.Errorf("invalid bump command in %s", intentLocation(commit))
+			}
+			v, err := pattern.Parse(value)
+			if err != nil || v.RC != 0 {
+				return VersionIntent{}, fmt.Errorf("exact bump %q in %s must match the main version pattern", value, intentLocation(commit))
+			}
+			core := v.Core
+			parsed.Exact = &core
+		}
+		if !intent.Found {
+			intent = parsed
+		}
 	}
 	return intent, nil
 }
@@ -282,31 +288,6 @@ func (i VersionIntent) Target(base version.Core) (version.Core, error) {
 		return version.Core{}, fmt.Errorf("exact version %s must be greater than latest stable version %s", i.Exact, base.String())
 	}
 	return *i.Exact, nil
-}
-
-// Preserves reports whether landed history retains a source history's intent.
-func (i VersionIntent) Preserves(required VersionIntent) bool {
-	if required.Exact != nil {
-		return i.Exact != nil && *i.Exact == *required.Exact
-	}
-	if required.Bump == version.Patch {
-		return true
-	}
-	return i.Exact == nil && i.Bump >= required.Bump
-}
-
-// Marker returns the marker a rewritten merge must preserve.
-func (i VersionIntent) Marker() string {
-	if i.Exact != nil {
-		return exactMarkerPrefix + i.Exact.String() + "]"
-	}
-	if i.Bump == version.Major {
-		return "[version:major]"
-	}
-	if i.Bump == version.Minor {
-		return "[version:minor]"
-	}
-	return ""
 }
 
 // Ancestor includes equality. Missing history is an error, never a false result.
@@ -396,38 +377,18 @@ func Calculate(ctx context.Context, h History, state State, req Request) (Result
 	if err != nil {
 		return Result{}, err
 	}
-	intent, err := ResolveIntent(commits)
-	if err != nil {
-		return Result{}, err
-	}
 	consumedIDs := map[string]bool{}
 	if main {
-		for _, source := range req.Sources {
-			if source.Pull < 0 {
-				return Result{}, fmt.Errorf("source PR number must not be negative")
-			}
-			hash, err := ParseHash(source.Head)
-			if err != nil {
-				return Result{}, err
-			}
-			// Non-rewritten merges already preserve intent in the landed history.
-			sourceRange, err := h.Range(ctx, hash, append(excluded, req.Commit), consumed)
-			if err != nil {
-				return Result{}, err
-			}
-			for _, commit := range sourceRange {
-				consumedIDs[commit.Hash.String()] = true
-			}
-			sourceIntent, err := ResolveIntent(sourceRange)
-			if err != nil {
-				return Result{}, err
-			}
-			if !intent.Preserves(sourceIntent) {
-				return Result{}, fmt.Errorf("merged source %s lost its version marker; preserve the marker in landed history before releasing", source.Head)
-			}
+		commits, err = expandSources(ctx, h, commits, req.Commit, excluded, consumed, req.Sources, consumedIDs)
+		if err != nil {
+			return Result{}, err
 		}
 	} else if len(req.Sources) != 0 {
 		return Result{}, fmt.Errorf("merged-source provenance is only valid for main releases")
+	}
+	intent, err := ResolveIntent(commits, p)
+	if err != nil {
+		return Result{}, err
 	}
 	core, err := intent.Target(base)
 	if err != nil {
@@ -458,4 +419,76 @@ func Calculate(ctx context.Context, h History, state State, req Request) (Result
 	}
 	sort.Strings(a.Consumed)
 	return Result{Tag: tag, Commit: a.Commit, Kind: kind, Status: "planned", Assignment: a}, nil
+}
+
+// expandSources places original PR commits at their rewritten landing point.
+// Inputs and output use logical newest-first order.
+func expandSources(ctx context.Context, h History, landed []repository.Commit, head plumbing.Hash, excluded, consumed []plumbing.Hash, sources []Source, consumedIDs map[string]bool) ([]repository.Commit, error) {
+	byLanding := make(map[string][]repository.Commit)
+	for _, source := range sources {
+		if source.Pull < 0 {
+			return nil, fmt.Errorf("source PR number must not be negative")
+		}
+		hash, err := ParseHash(source.Head)
+		if err != nil {
+			return nil, err
+		}
+		var original []repository.Commit
+		if len(source.Commits) == 0 {
+			original, err = h.Range(ctx, hash, append(excluded, head), consumed)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if source.Commits[len(source.Commits)-1] != source.Head {
+				return nil, fmt.Errorf("source %s commit order does not end at its head", source.Head)
+			}
+			for i := len(source.Commits) - 1; i >= 0; i-- {
+				id, err := ParseHash(source.Commits[i])
+				if err != nil {
+					return nil, err
+				}
+				commit, err := h.Commit(id)
+				if err != nil {
+					return nil, err
+				}
+				original = append(original, commit)
+			}
+		}
+		for _, commit := range original {
+			consumedIDs[commit.Hash.String()] = true
+		}
+		landing := source.Landing
+		if landing == "" {
+			landing = head.String()
+		} else if _, err := ParseHash(landing); err != nil {
+			return nil, err
+		}
+		if len(byLanding[landing]) != 0 {
+			return nil, fmt.Errorf("multiple merged sources share landing commit %s", landing)
+		}
+		byLanding[landing] = original
+	}
+
+	seen := make(map[string]bool)
+	var expanded []repository.Commit
+	for _, commit := range landed {
+		if original := byLanding[commit.Hash.String()]; len(original) != 0 {
+			for _, sourceCommit := range original {
+				if !seen[sourceCommit.Hash.String()] {
+					expanded = append(expanded, sourceCommit)
+					seen[sourceCommit.Hash.String()] = true
+				}
+			}
+			delete(byLanding, commit.Hash.String())
+		}
+		if !seen[commit.Hash.String()] {
+			expanded = append(expanded, commit)
+			seen[commit.Hash.String()] = true
+		}
+	}
+	if len(byLanding) != 0 {
+		return nil, fmt.Errorf("merged source landing is outside the released commit range")
+	}
+	return expanded, nil
 }

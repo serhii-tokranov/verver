@@ -4,6 +4,15 @@ branding:
   icon: tag
   color: blue
 inputs:
+  ref:
+    description: Full branch ref tested by the completed source workflow.
+    required: true
+  sha:
+    description: Full commit SHA tested by the completed source workflow.
+    required: true
+  workflow:
+    description: Path of the trusted source workflow.
+    default: .github/workflows/ci.yml
   main-branch:
     description: Branch receiving stable releases.
     default: main
@@ -68,7 +77,8 @@ runs:
           *) echo 'adopt-existing must be true or false' >&2; exit 2 ;;
         esac
         "$VERVER_BINARY" release --path "$REPO_PATH" \
-          --ref "$GITHUB_REF" --sha "$GITHUB_SHA" --serialized \
+          --ref "${{ inputs.ref }}" --sha "${{ inputs.sha }}" --serialized \
+          --workflow "${{ inputs.workflow }}" \
           --main-branch "$MAIN_BRANCH" --main-pattern "$MAIN_PATTERN" \
           --feature-pattern "$FEATURE_PATTERN" \
           --github "$GITHUB_REPOSITORY" \

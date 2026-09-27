@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,8 +26,6 @@ type Pull struct {
 	Number      int    `json:"number"`
 	Merged      bool   `json:"merged"`
 	MergeCommit string `json:"merge_commit_sha"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
 	Head        struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
@@ -39,6 +36,35 @@ type Pull struct {
 			FullName string `json:"full_name"`
 		} `json:"repo"`
 	} `json:"base"`
+}
+
+func (c *Client) PullCommits(ctx context.Context, number int) ([]string, error) {
+	var commits []string
+	for page := 1; ; page++ {
+		if page > 1000 {
+			return nil, fmt.Errorf("GitHub PR commit pagination exceeded 1000 pages")
+		}
+		var response []struct {
+			SHA string `json:"sha"`
+		}
+		more, err := c.get(ctx, fmt.Sprintf("/pulls/%d/commits?per_page=100&page=%d", number, page), &response)
+		if err != nil {
+			return nil, err
+		}
+		for _, commit := range response {
+			if _, err := release.ParseHash(commit.SHA); err != nil {
+				return nil, fmt.Errorf("PR %d contains an invalid commit SHA", number)
+			}
+			commits = append(commits, commit.SHA)
+		}
+		if !more {
+			break
+		}
+	}
+	if len(commits) == 0 {
+		return nil, fmt.Errorf("PR %d contains no commits", number)
+	}
+	return commits, nil
 }
 
 func ValidRepository(repo string) bool {
@@ -158,13 +184,19 @@ func (c *Client) Sources(ctx context.Context, commits []repository.Commit, main 
 				if !p.Merged || p.Base.Ref != main || !landed[p.MergeCommit] {
 					continue
 				}
-				sources = append(sources, release.Source{Head: p.Head.SHA, Pull: p.Number})
+				commits, err := c.PullCommits(ctx, p.Number)
+				if err != nil {
+					return nil, err
+				}
+				if commits[len(commits)-1] != p.Head.SHA {
+					return nil, fmt.Errorf("PR %d commit order does not end at its head", p.Number)
+				}
+				sources = append(sources, release.Source{Head: p.Head.SHA, Pull: p.Number, Landing: p.MergeCommit, Commits: commits})
 			}
 			if !more {
 				break
 			}
 		}
 	}
-	sort.Slice(sources, func(i, j int) bool { return sources[i].Pull < sources[j].Pull })
 	return sources, nil
 }

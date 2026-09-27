@@ -21,7 +21,7 @@ import (
 )
 
 func cliRepo(t *testing.T) (string, *git.Repository, plumbing.Hash) {
-	return cliRepoMessage(t, "first [version:minor]")
+	return cliRepoMessage(t, "verver: bump minor")
 }
 
 func cliRepoMessage(t *testing.T, message string) (string, *git.Repository, plumbing.Hash) {
@@ -40,8 +40,16 @@ func cliRepoMessage(t *testing.T, message string) (string, *git.Repository, plum
 		t.Fatal(err)
 	}
 	sig := object.Signature{Name: "Test", Email: "test@example.com", When: time.Unix(1, 0)}
+	rootObject := repo.Storer.NewEncodedObject()
+	if err := (&object.Commit{Author: sig, Committer: sig, Message: "initial", TreeHash: treeHash}).Encode(rootObject); err != nil {
+		t.Fatal(err)
+	}
+	root, err := repo.Storer.SetEncodedObject(rootObject)
+	if err != nil {
+		t.Fatal(err)
+	}
 	obj := repo.Storer.NewEncodedObject()
-	if err := (&object.Commit{Author: sig, Committer: sig, Message: message, TreeHash: treeHash}).Encode(obj); err != nil {
+	if err := (&object.Commit{Author: sig, Committer: sig, Message: message, TreeHash: treeHash, ParentHashes: []plumbing.Hash{root}}).Encode(obj); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := repo.Storer.SetEncodedObject(obj)
@@ -57,7 +65,7 @@ func cliRepoMessage(t *testing.T, message string) (string, *git.Repository, plum
 }
 
 func TestCLIExactVersionPreview(t *testing.T) {
-	path, _, _ := cliRepoMessage(t, "chore: [version:set=2.5.0] align release")
+	path, _, _ := cliRepoMessage(t, "verver: bump v2.5.0")
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"next", "--path", path, "--ref", "refs/heads/main"}, &stdout, &stderr, "test")
 	if code != 0 || stdout.String() != "v2.5.0\n" {
@@ -125,7 +133,6 @@ func TestCLIValidationAndOfflinePreview(t *testing.T) {
 		{"next", "--ref", "main"},
 		{"next", "--ref", "refs/heads/main", "--sha", "abc"},
 		{"next", "--ref", "refs/heads/main", "--format", "bad"},
-		{"check-pr"},
 	} {
 		stdout.Reset()
 		stderr.Reset()
@@ -142,34 +149,39 @@ func TestCLIValidationAndOfflinePreview(t *testing.T) {
 	}
 }
 
-func TestGitHubWriteEventGate(t *testing.T) {
+func TestGitHubWorkflowRunGate(t *testing.T) {
 	_, _, hash := cliRepo(t)
-	o := options{ref: "refs/heads/main", github: "owner/repo"}
+	o := options{ref: "refs/heads/main", github: "owner/repo", workflow: ".github/workflows/ci.yml"}
 	t.Setenv("GITHUB_ACTIONS", "true")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
-	if err := validatePushEvent(o, hash); err == nil {
-		t.Fatal("PR write accepted")
-	}
 	t.Setenv("GITHUB_EVENT_NAME", "push")
-	t.Setenv("GITHUB_REF", o.ref)
-	t.Setenv("GITHUB_SHA", hash.String())
+	if err := validateGitHubEvent(o, hash); err == nil {
+		t.Fatal("push workflow write accepted")
+	}
+	t.Setenv("GITHUB_EVENT_NAME", "workflow_run")
 	t.Setenv("GITHUB_REPOSITORY", o.github)
 	path := filepath.Join(t.TempDir(), "event.json")
 	t.Setenv("GITHUB_EVENT_PATH", path)
-	event := map[string]any{"ref": o.ref, "after": hash.String(), "deleted": false, "repository": map[string]string{"full_name": o.github}}
+	event := map[string]any{
+		"action":     "completed",
+		"repository": map[string]string{"full_name": o.github},
+		"workflow_run": map[string]any{
+			"conclusion": "success", "event": "push", "head_branch": "main", "head_sha": hash.String(),
+			"path": o.workflow, "head_repository": map[string]string{"full_name": o.github},
+		},
+	}
 	data, _ := json.Marshal(event)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validatePushEvent(o, hash); err != nil {
+	if err := validateGitHubEvent(o, hash); err != nil {
 		t.Fatal(err)
 	}
-	event["deleted"] = true
+	event["workflow_run"].(map[string]any)["conclusion"] = "failure"
 	data, _ = json.Marshal(event)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validatePushEvent(o, hash); err == nil {
-		t.Fatal("deleted branch accepted")
+	if err := validateGitHubEvent(o, hash); err == nil {
+		t.Fatal("failed source workflow accepted")
 	}
 }

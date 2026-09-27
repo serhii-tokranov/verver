@@ -25,6 +25,7 @@ type Commit struct {
 	Hash    plumbing.Hash
 	Parents []plumbing.Hash
 	Message string
+	Empty   bool
 }
 
 type Tag struct {
@@ -97,7 +98,15 @@ func (r *Reader) Commit(hash plumbing.Hash) (Commit, error) {
 	if err != nil {
 		return Commit{}, fmt.Errorf("read commit %s: %w", hash, err)
 	}
-	return Commit{Hash: c.Hash, Parents: append([]plumbing.Hash(nil), c.ParentHashes...), Message: c.Message}, nil
+	empty := false
+	if len(c.ParentHashes) == 1 {
+		parent, err := r.repo.CommitObject(c.ParentHashes[0])
+		if err != nil {
+			return Commit{}, fmt.Errorf("read parent of commit %s: %w", hash, err)
+		}
+		empty = c.TreeHash == parent.TreeHash
+	}
+	return Commit{Hash: c.Hash, Parents: append([]plumbing.Hash(nil), c.ParentHashes...), Message: c.Message, Empty: empty}, nil
 }
 
 // Tags returns matching tags in ascending numeric order. Unrelated names are
