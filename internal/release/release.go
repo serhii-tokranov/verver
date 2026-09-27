@@ -133,6 +133,9 @@ func Decode(tag repository.Tag) (*Assignment, error) {
 				return nil, fmt.Errorf("tag %s has invalid source commit", tag.Name)
 			}
 		}
+		if len(src.Commits) != 0 && src.Commits[len(src.Commits)-1] != src.Head {
+			return nil, fmt.Errorf("tag %s has source commits that do not end at the source head", tag.Name)
+		}
 	}
 	for _, id := range a.Consumed {
 		if _, err := ParseHash(id); err != nil {
