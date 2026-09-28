@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -181,17 +182,32 @@ func (c *Client) Sources(ctx context.Context, commits []repository.Commit, main 
 				if err != nil {
 					return nil, err
 				}
-				if !p.Merged || p.Base.Ref != main || !landed[p.MergeCommit] {
+				if !p.Merged || p.Base.Ref != main {
 					continue
 				}
-				commits, err := c.PullCommits(ctx, p.Number)
+				landing := p.MergeCommit
+				if landing != "" {
+					if _, err := release.ParseHash(landing); err != nil {
+						return nil, fmt.Errorf("PR %d merge commit: %w", p.Number, err)
+					}
+					if !landed[landing] {
+						continue
+					}
+				}
+				original, err := c.PullCommits(ctx, p.Number)
 				if err != nil {
 					return nil, err
 				}
-				if commits[len(commits)-1] != p.Head.SHA {
+				if original[len(original)-1] != p.Head.SHA {
 					return nil, fmt.Errorf("PR %d commit order does not end at its head", p.Number)
 				}
-				sources = append(sources, release.Source{Head: p.Head.SHA, Pull: p.Number, Landing: p.MergeCommit, Commits: commits})
+				if landing == "" {
+					landing = commit.Hash.String()
+					if slices.Contains(original, landing) {
+						continue
+					}
+				}
+				sources = append(sources, release.Source{Head: p.Head.SHA, Pull: p.Number, Landing: landing, Commits: original})
 			}
 			if !more {
 				break
