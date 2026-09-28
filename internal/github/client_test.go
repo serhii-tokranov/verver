@@ -30,7 +30,7 @@ func TestSources(t *testing.T) {
 				w.Header().Set("Link", `<https://ignored.example/evil>; rel="next"`)
 				fmt.Fprint(w, `[{"number":1}]`)
 			} else {
-				fmt.Fprint(w, `[{"number":1},{"number":2},{"number":3}]`)
+				fmt.Fprint(w, `[{"number":1},{"number":2},{"number":3},{"number":4}]`)
 			}
 		case strings.HasSuffix(r.URL.Path, "/pulls/1"):
 			details++
@@ -41,6 +41,9 @@ func TestSources(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/pulls/3"):
 			details++
 			fmt.Fprintf(w, `{"number":3,"merged":true,"merge_commit_sha":%q,"head":{"sha":%q},"base":{"ref":"other","repo":{"full_name":"owner/repo"}}}`, landing, head)
+		case strings.HasSuffix(r.URL.Path, "/pulls/4"):
+			details++
+			fmt.Fprintf(w, `{"number":4,"merged":true,"merge_commit_sha":null,"head":{"sha":%q},"base":{"ref":"main","repo":{"full_name":"owner/repo"}}}`, head)
 		default:
 			t.Errorf("unexpected request %s", r.URL)
 			w.WriteHeader(404)
@@ -52,7 +55,7 @@ func TestSources(t *testing.T) {
 	}
 	client.http.Transport = handlerTransport{handler}
 	sources, err := client.Sources(context.Background(), []repository.Commit{{Hash: plumbing.NewHash(landing)}}, "main")
-	if err != nil || len(sources) != 1 || sources[0].Head != head || sources[0].Pull != 1 || sources[0].Landing != landing || len(sources[0].Commits) != 1 || pages != 2 || details != 3 {
+	if err != nil || len(sources) != 1 || sources[0].Head != head || sources[0].Pull != 1 || sources[0].Landing != landing || len(sources[0].Commits) != 1 || pages != 2 || details != 4 {
 		t.Fatal(sources, err, pages, details)
 	}
 }
