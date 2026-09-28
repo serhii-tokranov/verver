@@ -166,7 +166,7 @@ Tags are annotated, immutable, and point to the tested commit. If a connection d
 
 ## CLI
 
-Build with Go 1.26 or later:
+Build with Go 1.27 or later:
 
 ```sh
 go build -trimpath -o bin/verver ./cmd/verver

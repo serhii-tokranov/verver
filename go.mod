@@ -1,6 +1,6 @@
 module github.com/serhii-tokranov/verver
 
-go 1.26.0
+go 1.27.0
 
 require github.com/go-git/go-git/v5 v5.19.2
 
