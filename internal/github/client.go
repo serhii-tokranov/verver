@@ -148,11 +148,6 @@ func (c *Client) Pull(ctx context.Context, number int) (Pull, error) {
 	if _, err := release.ParseHash(p.Head.SHA); err != nil {
 		return p, fmt.Errorf("PR head: %w", err)
 	}
-	if p.Merged {
-		if _, err := release.ParseHash(p.MergeCommit); err != nil {
-			return p, fmt.Errorf("PR merge commit: %w", err)
-		}
-	}
 	return p, nil
 }
 
