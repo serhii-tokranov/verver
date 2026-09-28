@@ -24,6 +24,8 @@ func TestSources(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/pulls/1/commits"):
 			fmt.Fprintf(w, `[{"sha":%q}]`, head)
+		case strings.HasSuffix(r.URL.Path, "/pulls/4/commits"):
+			fmt.Fprintf(w, `[{"sha":%q},{"sha":%q}]`, landing, head)
 		case strings.Contains(r.URL.Path, "/commits/"):
 			pages++
 			if r.URL.Query().Get("page") == "1" {
@@ -57,6 +59,34 @@ func TestSources(t *testing.T) {
 	sources, err := client.Sources(context.Background(), []repository.Commit{{Hash: plumbing.NewHash(landing)}}, "main")
 	if err != nil || len(sources) != 1 || sources[0].Head != head || sources[0].Pull != 1 || sources[0].Landing != landing || len(sources[0].Commits) != 1 || pages != 2 || details != 4 {
 		t.Fatal(sources, err, pages, details)
+	}
+}
+
+func TestSourcesUsesAssociatedCommitWhileMergeSHAIsPending(t *testing.T) {
+	landing := strings.Repeat("a", 40)
+	first := strings.Repeat("b", 40)
+	head := strings.Repeat("c", 40)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pulls/5/commits"):
+			fmt.Fprintf(w, `[{"sha":%q},{"sha":%q}]`, first, head)
+		case strings.Contains(r.URL.Path, "/commits/"):
+			fmt.Fprint(w, `[{"number":5}]`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/5"):
+			fmt.Fprintf(w, `{"number":5,"merged":true,"merge_commit_sha":null,"head":{"sha":%q},"base":{"ref":"main","repo":{"full_name":"owner/repo"}}}`, head)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+			w.WriteHeader(404)
+		}
+	})
+	client, err := New("https://api.example.test", "owner/repo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.http.Transport = handlerTransport{handler}
+	sources, err := client.Sources(context.Background(), []repository.Commit{{Hash: plumbing.NewHash(landing)}}, "main")
+	if err != nil || len(sources) != 1 || sources[0].Pull != 5 || sources[0].Landing != landing || len(sources[0].Commits) != 2 {
+		t.Fatal(sources, err)
 	}
 }
 
